@@ -215,11 +215,12 @@ def generar_boleta(data):
     ACU_H = sty('ACUH', textColor=GOLD_LT, fontName='Helvetica-Bold',
                 alignment=TA_CENTER, fontSize=fs_grade, leading=int(fs_grade)+2)
 
-    # Fila de encabezados nivel 1: ASIGNATURAS | Trimestre 1 | Trimestre 2 | ... | ACU
+    # Fila de encabezados nivel 1: ASIGNATURAS | Trimestre 1 (span) | Trimestre 2 (span) | ... | ACU
     h1 = [Paragraph('ASIGNATURAS', TH_S)]
     for i in range(num_periodos):
         h1.append(Paragraph(f'{periodo_term} {i+1}', TH_S))
-        # span N+1 cols (comps + NFT) — usamos colspan via SPAN después
+        for _ in range(N):   # celdas vacías para el span (N componentes + ya pusimos 1 = N+1 total)
+            h1.append('')
     h1.append(Paragraph('ACU', ACU_H))
 
     # Fila nivel 2: vacío | AC AI EM EF NFT | AC AI EM EF NFT | ... | —
@@ -317,6 +318,8 @@ def generar_boleta(data):
         ing_h1 = [Paragraph('CURSO COMPLEMENTARIO', ING_TH)]
         for i in range(num_periodos):
             ing_h1.append(Paragraph(f'{periodo_term} {i+1}', ING_TH))
+            for _ in range(N):
+                ing_h1.append('')
         ing_h1.append(Paragraph('PROMEDIO', ING_TH))
 
         ing_h2 = [Paragraph('', TH2_S)]
