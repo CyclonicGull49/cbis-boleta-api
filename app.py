@@ -14,7 +14,6 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 app = Flask(__name__)
 CORS(app)
 
-# ── Logo — embedded as base64 so no file dependency ──────────
 LOGO_B64 = os.environ.get('LOGO_B64', '')
 
 MESES = ['enero','febrero','marzo','abril','mayo','junio',
@@ -42,8 +41,8 @@ COMP_GRP= colors.HexColor('#EEF1F9')
 LIGHT_BG= colors.HexColor('#F0F4FB')
 
 PESOS = {'ac': 0.35, 'ai': 0.35, 'em': 0.10, 'ep': 0.10, 'ef': 0.20}
-PESOS_LABEL = {'ac': '35%', 'ai': '35%', 'em': '10%', 'ep': '10%', 'ef': '20%'}
 COMP_LABELS = {'ac': 'AC', 'ai': 'AI', 'em': 'EM', 'ep': 'EP', 'ef': 'EF'}
+PESOS_LABEL = {'ac': '35%', 'ai': '35%', 'em': '10%', 'ep': '10%', 'ef': '20%'}
 
 COMPETENCIAS_CONFIG = {
     'primera_infancia': [
@@ -77,51 +76,52 @@ def nota_color(n):
     if n < 7:     return AMBER
     return GREEN
 
-def sty(name, **kw):
-    d = dict(fontSize=7.5, textColor=NAVY, leading=10, fontName='Helvetica')
-    d.update(kw)
-    return ParagraphStyle(name, **d)
-
 def calc_nft(notas_map, comps):
     vals = [notas_map.get(c) for c in comps]
     if any(v is None for v in vals):
         return None
     return sum(notas_map[c] * PESOS[c] for c in comps)
 
+def sty(name, **kw):
+    d = dict(fontSize=7.5, textColor=NAVY, leading=10, fontName='Helvetica')
+    d.update(kw)
+    return ParagraphStyle(name, **d)
+
 def nota_p(v, fs=7.5, big=False):
     return Paragraph(
         f'{v:.2f}' if v is not None else '—',
-        ParagraphStyle('np', fontSize=fs + (0.5 if big else 0),
+        ParagraphStyle(f'np', fontSize=fs + (0.5 if big else 0),
                        textColor=nota_color(v),
                        fontName='Helvetica-Bold' if v is not None else 'Helvetica',
                        alignment=TA_CENTER, leading=int(fs) + 2))
 
+
 def generar_boleta(data):
     """
+    Genera la boleta mostrando SIEMPRE todos los períodos.
     data = {
         estudiante: { nombre, apellido, grado, nivel, encargado },
         year: int,
-        periodo: int (1-4, or 0 for anual),
-        periodo_label: str,
+        periodo_seleccionado: int | 'anual',  # cuál está marcado
+        periodo_label: str,                    # etiqueta para el encabezado
         num_periodos: int,
         periodo_term: str,
         componentes: ['ac','ai','em','ef'],
-        materias: [{ nombre, notas: {ac,ai,em,ef} }],
-        ingles: { nombre_curso, notas: {ac,ai,...} } | null,
-        competencias_valores: { 'diseño_original_1': 'E', ... } | null,
+        # materias: lista donde cada materia trae notas de TODOS los períodos
+        materias: [{ nombre, notas_por_periodo: { 1: {ac,ai,...}, 2: {...}, ... } }],
+        ingles: { nombre_curso, notas_por_periodo: {...} } | null,
     }
     """
-    est         = data['estudiante']
-    year        = data['year']
-    periodo_label = data['periodo_label']
-    num_periodos  = data['num_periodos']
-    periodo_term  = data['periodo_term']
-    componentes   = [c.lower() for c in data['componentes']]
-    materias      = data['materias']
-    ingles        = data.get('ingles')
-    comp_valores  = data.get('competencias_valores', {}) or {}
-    nivel         = est['nivel']
-    competencias  = COMPETENCIAS_CONFIG.get(nivel, [])
+    est          = data['estudiante']
+    year         = data['year']
+    periodo_label= data['periodo_label']
+    num_periodos = data['num_periodos']
+    periodo_term = data['periodo_term']
+    componentes  = [c.lower() for c in data['componentes']]
+    materias     = data['materias']
+    ingles       = data.get('ingles')
+    nivel        = est['nivel']
+    competencias = COMPETENCIAS_CONFIG.get(nivel, [])
 
     comp_labels_upper = [COMP_LABELS[c] for c in componentes]
     pesos_labels_list = [PESOS_LABEL[c] for c in componentes]
@@ -195,8 +195,15 @@ def generar_boleta(data):
     story.append(info_tbl)
     story.append(Spacer(1, 5))
 
-    # ── GRADES TABLE ─────────────────────────────────────────
-    cw = [None] + [1.22*cm]*len(componentes) + [1.45*cm]
+    # ── GRADES TABLE — siempre todos los períodos ─────────────
+    # Columnas: ASIGNATURAS | [comps + NFT] x num_periodos | ACU
+    N = len(componentes)
+
+    # Anchos de columna
+    nota_w = 1.0*cm
+    nft_w  = 1.2*cm
+    acu_w  = 1.3*cm
+
     TH_S  = sty('THS', textColor=WHITE, fontName='Helvetica-Bold',
                 alignment=TA_CENTER, fontSize=fs_grade, leading=int(fs_grade)+2)
     TH2_S = sty('TH2S', textColor=GOLD_LT, fontName='Helvetica',
@@ -205,80 +212,158 @@ def generar_boleta(data):
                 leading=int(fs_grade)+2)
     NFT_H = sty('NFTH', textColor=GOLD_LT, fontName='Helvetica-Bold',
                 alignment=TA_CENTER, fontSize=fs_grade, leading=int(fs_grade)+2)
+    ACU_H = sty('ACUH', textColor=GOLD_LT, fontName='Helvetica-Bold',
+                alignment=TA_CENTER, fontSize=fs_grade, leading=int(fs_grade)+2)
 
-    rows = [
-        [Paragraph('ASIGNATURAS', TH_S)] +
-        [Paragraph(c, TH_S) for c in comp_labels_upper] +
-        [Paragraph('NFT', NFT_H)],
-        [Paragraph('', TH2_S)] +
-        [Paragraph(p, TH2_S) for p in pesos_labels_list] +
-        [Paragraph('', TH2_S)],
-    ]
-    for m in materias:
-        notas = {k.lower(): v for k, v in (m.get('notas') or {}).items()}
-        nft   = calc_nft(notas, componentes)
-        row   = [Paragraph(m['nombre'], TDL_S)]
+    # Fila de encabezados nivel 1: ASIGNATURAS | Trimestre 1 | Trimestre 2 | ... | ACU
+    h1 = [Paragraph('ASIGNATURAS', TH_S)]
+    for i in range(num_periodos):
+        h1.append(Paragraph(f'{periodo_term} {i+1}', TH_S))
+        # span N+1 cols (comps + NFT) — usamos colspan via SPAN después
+    h1.append(Paragraph('ACU', ACU_H))
+
+    # Fila nivel 2: vacío | AC AI EM EF NFT | AC AI EM EF NFT | ... | —
+    h2 = [Paragraph('', TH2_S)]
+    for _ in range(num_periodos):
         for c in componentes:
-            row.append(nota_p(notas.get(c), fs=fs_grade))
-        row.append(nota_p(nft, fs=fs_grade, big=True))
+            h2.append(Paragraph(PESOS_LABEL[c], TH2_S))
+        h2.append(Paragraph('NFT', sty('NFTH2', textColor=GOLD_LT, fontName='Helvetica-Bold',
+                             alignment=TA_CENTER, fontSize=fs_grade-1, leading=int(fs_grade))))
+    h2.append(Paragraph('', TH2_S))
+
+    # Construir rows
+    rows = [h1, h2]
+
+    for m in materias:
+        notas_pp = m.get('notas_por_periodo', {})
+        row = [Paragraph(m['nombre'], TDL_S)]
+        nfts_periodo = []
+        for p in range(1, num_periodos + 1):
+            notas = notas_pp.get(str(p), {})
+            for c in componentes:
+                v = notas.get(c)
+                row.append(nota_p(v, fs=fs_grade))
+            nft = calc_nft(notas, componentes)
+            nfts_periodo.append(nft)
+            row.append(nota_p(nft, fs=fs_grade, big=True))
+
+        # ACU = promedio de NFTs disponibles
+        validos = [n for n in nfts_periodo if n is not None]
+        acu = sum(validos) / len(validos) if validos else None
+        row.append(nota_p(acu, fs=fs_grade+0.5, big=True))
         rows.append(row)
 
+    # Anchos de columna: [mat_col] + [nota_w * N + nft_w] * num_periodos + [acu_w]
+    fixed_w = (N * nota_w + nft_w) * num_periodos + acu_w
+    PAGE_W  = landscape(letter)[0]
+    mat_w   = PAGE_W - ML - MR - fixed_w
+    cw = [mat_w]
+    for _ in range(num_periodos):
+        cw += [nota_w] * N + [nft_w]
+    cw += [acu_w]
+
     grade_tbl = Table(rows, colWidths=cw, repeatRows=2)
-    grade_tbl.setStyle(TableStyle([
+
+    # Calcular índices de columna para separadores de período
+    ts = [
         ('BACKGROUND', (0,0), (-1,0), NAVY2),
         ('BACKGROUND', (0,1), (-1,1), NAVY3),
         ('LINEABOVE', (0,0), (-1,0), 2, GOLD),
         ('ROWBACKGROUNDS', (0,2), (-1,-1), [WHITE, ROW_ALT]),
         ('LINEBELOW', (0,1), (-1,-1), 0.3, LGRAY),
-        ('LINEBEFORE', (1,0), (-1,-1), 0.3, colors.HexColor('#ccd4e8')),
-        ('LINEAFTER', (-2,0), (-2,-1), 1, BORDER),
-        ('BACKGROUND', (-1,2), (-1,-1), NFT_BG),
         ('BOX', (0,0), (-1,-1), 0.8, NAVY),
         ('TOPPADDING', (0,0), (-1,-1), pad),
         ('BOTTOMPADDING', (0,0), (-1,-1), pad),
         ('LEFTPADDING', (0,0), (0,-1), 8),
-        ('LEFTPADDING', (1,0), (-1,-1), 2), ('RIGHTPADDING', (0,0), (-1,-1), 2),
+        ('LEFTPADDING', (1,0), (-1,-1), 1), ('RIGHTPADDING', (0,0), (-1,-1), 1),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ]))
+        # ACU column bg
+        ('BACKGROUND', (-1,2), (-1,-1), NFT_BG),
+        ('LINEAFTER', (-2,0), (-2,-1), 1, BORDER),
+    ]
+
+    # SPAN headers de período
+    col = 1
+    for i in range(num_periodos):
+        end_col = col + N  # inclusive (N notas + 1 NFT = N+1 cols)
+        ts.append(('SPAN', (col, 0), (end_col, 0)))
+        ts.append(('ALIGN', (col, 0), (end_col, 0), 'CENTER'))
+        # Separador visual entre períodos
+        ts.append(('LINEBEFORE', (col, 0), (col, -1), 0.8, BORDER))
+        # NFT col highlight
+        ts.append(('BACKGROUND', (end_col, 2), (end_col, -1), colors.HexColor('#edf1fb')))
+        col = end_col + 1
+
+    grade_tbl.setStyle(TableStyle(ts))
     story.append(grade_tbl)
 
-    # ── CURSOS COMPLEMENTARIOS (inglés, secundaria/bachillerato) ──
+    # ── CURSOS COMPLEMENTARIOS ────────────────────────────────
     if ingles:
         story.append(Spacer(1, 3))
         comp_hdr = Table([[Paragraph('CURSOS COMPLEMENTARIOS', TH_S)]], colWidths=[None])
         comp_hdr.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), NAVY2),
             ('LINEABOVE', (0,0), (-1,-1), 2, GOLD),
+            ('BOX', (0,0), (-1,-1), 0.8, NAVY),
             ('TOPPADDING', (0,0), (-1,-1), pad), ('BOTTOMPADDING', (0,0), (-1,-1), pad),
             ('LEFTPADDING', (0,0), (-1,-1), 8),
         ]))
         story.append(comp_hdr)
 
-        ing_notas = {k.lower(): v for k, v in (ingles.get('notas') or {}).items()}
-        ing_nft   = calc_nft(ing_notas, componentes)
         ING_TH = sty('ITH', textColor=WHITE, fontName='Helvetica-Bold',
                      alignment=TA_CENTER, fontSize=fs_grade-0.5, leading=int(fs_grade)+1)
-        ing_rows = [
-            [Paragraph('CURSO COMPLEMENTARIO', ING_TH)] +
-            [Paragraph(c, ING_TH) for c in comp_labels_upper] +
-            [Paragraph('PROMEDIO', ING_TH)],
-            [Paragraph(ingles.get('nombre_curso', 'English'), TDL_S)] +
-            [nota_p(ing_notas.get(c), fs=fs_grade) for c in componentes] +
-            [nota_p(ing_nft, fs=fs_grade, big=True)],
-        ]
+        notas_pp = ingles.get('notas_por_periodo', {})
+
+        ing_h1 = [Paragraph('CURSO COMPLEMENTARIO', ING_TH)]
+        for i in range(num_periodos):
+            ing_h1.append(Paragraph(f'{periodo_term} {i+1}', ING_TH))
+        ing_h1.append(Paragraph('PROMEDIO', ING_TH))
+
+        ing_h2 = [Paragraph('', TH2_S)]
+        for _ in range(num_periodos):
+            for c in componentes:
+                ing_h2.append(Paragraph(PESOS_LABEL[c], TH2_S))
+            ing_h2.append(Paragraph('NFT', TH2_S))
+        ing_h2.append(Paragraph('', TH2_S))
+
+        ing_row = [Paragraph(ingles.get('nombre_curso', 'English'), TDL_S)]
+        nfts = []
+        for p in range(1, num_periodos + 1):
+            notas = notas_pp.get(str(p), {})
+            for c in componentes:
+                ing_row.append(nota_p(notas.get(c), fs=fs_grade))
+            nft = calc_nft(notas, componentes)
+            nfts.append(nft)
+            ing_row.append(nota_p(nft, fs=fs_grade, big=True))
+        validos = [n for n in nfts if n is not None]
+        prom = sum(validos)/len(validos) if validos else None
+        ing_row.append(nota_p(prom, fs=fs_grade+0.5, big=True))
+
+        ing_rows = [ing_h1, ing_h2, ing_row]
         ing_tbl = Table(ing_rows, colWidths=cw)
-        ing_tbl.setStyle(TableStyle([
+
+        ing_ts = [
             ('BACKGROUND', (0,0), (-1,0), NAVY3),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1), [WHITE]),
+            ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#2a3e70')),
+            ('LINEABOVE', (0,0), (-1,0), 2, GOLD),
+            ('ROWBACKGROUNDS', (0,2), (-1,-1), [WHITE]),
             ('LINEBELOW', (0,0), (-1,-1), 0.3, LGRAY),
-            ('LINEBEFORE', (1,0), (-1,-1), 0.3, colors.HexColor('#ccd4e8')),
-            ('LINEAFTER', (-2,0), (-2,-1), 1, BORDER),
             ('BOX', (0,0), (-1,-1), 0.8, NAVY),
             ('TOPPADDING', (0,0), (-1,-1), pad), ('BOTTOMPADDING', (0,0), (-1,-1), pad),
             ('LEFTPADDING', (0,0), (0,-1), 8),
-            ('LEFTPADDING', (1,0), (-1,-1), 2), ('RIGHTPADDING', (0,0), (-1,-1), 2),
+            ('LEFTPADDING', (1,0), (-1,-1), 1), ('RIGHTPADDING', (0,0), (-1,-1), 1),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ]))
+            ('BACKGROUND', (-1,2), (-1,-1), NFT_BG),
+            ('LINEAFTER', (-2,0), (-2,-1), 1, BORDER),
+        ]
+        col2 = 1
+        for i in range(num_periodos):
+            end_col2 = col2 + N
+            ing_ts.append(('SPAN', (col2, 0), (end_col2, 0)))
+            ing_ts.append(('ALIGN', (col2, 0), (end_col2, 0), 'CENTER'))
+            ing_ts.append(('LINEBEFORE', (col2, 0), (col2, -1), 0.8, BORDER))
+            col2 = end_col2 + 1
+        ing_tbl.setStyle(TableStyle(ing_ts))
         story.append(ing_tbl)
 
     story.append(Spacer(1, 6))
@@ -310,33 +395,19 @@ def generar_boleta(data):
         COMP_GH2 = sty('CGH2', fontSize=fs_comp+0.5, fontName='Helvetica-Bold',
                         textColor=NAVY2, leading=int(fs_comp)+3)
         COMP_IT2 = sty('CIT2', fontSize=fs_comp, textColor=GRAY, leading=int(fs_comp)+2)
-        COMP_VAL = sty('CVAL', fontSize=fs_comp, textColor=NAVY, fontName='Helvetica-Bold',
-                        alignment=TA_CENTER, leading=int(fs_comp)+2)
-
-        # Map competencia key → valor (E/MB/B)
-        COMP_KEY_MAP = {
-            'diseño_original_1': 0, 'diseño_original_2': 1,
-            'ed_cristiana_1': 0,    'ed_cristiana_2': 1,
-        }
 
         n_extra = num_periodos + 1
         comp_rows = [[Paragraph('COMPETENCIAS CIUDADANAS', COMP_TH2)] +
                      [Paragraph(t, COMP_TH2) for t in t_labels] +
                      [Paragraph('PROM', COMP_TH2)]]
-
         for grupo, items in competencias:
             comp_rows.append([Paragraph(grupo, COMP_GH2)] + ['']*n_extra)
             for item in items:
-                # Empty cells for E/MB/B marking
-                comp_rows.append(
-                    [Paragraph(item, COMP_IT2)] +
-                    [Paragraph('', COMP_VAL)]*num_periodos +
-                    [Paragraph('', COMP_VAL)]
-                )
+                comp_rows.append([Paragraph(item, COMP_IT2)] + ['']*n_extra)
 
         p_cw = 2.2*cm
         comp_cw2 = [None] + [p_cw]*num_periodos + [1.6*cm]
-        ts = [
+        comp_ts = [
             ('BACKGROUND', (0,0), (-1,0), NAVY2),
             ('LINEABOVE', (0,0), (-1,0), 2, GOLD),
             ('BOX', (0,0), (-1,-1), 0.7, BORDER),
@@ -349,15 +420,14 @@ def generar_boleta(data):
         ]
         row_idx = 1
         for grupo, items in competencias:
-            ts += [('BACKGROUND', (0,row_idx), (-1,row_idx), COMP_GRP),
-                   ('SPAN', (1,row_idx), (-1,row_idx))]
+            comp_ts += [('BACKGROUND', (0,row_idx), (-1,row_idx), COMP_GRP),
+                        ('SPAN', (1,row_idx), (-1,row_idx))]
             row_idx += 1
             for _ in items:
-                ts.append(('BACKGROUND', (0,row_idx), (-1,row_idx), WHITE))
+                comp_ts.append(('BACKGROUND', (0,row_idx), (-1,row_idx), WHITE))
                 row_idx += 1
-
         comp_tbl2 = Table(comp_rows, colWidths=comp_cw2)
-        comp_tbl2.setStyle(TableStyle(ts))
+        comp_tbl2.setStyle(TableStyle(comp_ts))
 
         bottom = Table([[esc_tbl, comp_tbl2]], colWidths=[4.0*cm, None])
         bottom.setStyle(TableStyle([
@@ -436,7 +506,8 @@ def generar():
         )
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
 if __name__ == '__main__':
