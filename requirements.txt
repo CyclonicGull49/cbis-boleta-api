@@ -3,3 +3,4 @@ flask-cors==4.0.1
 reportlab==4.2.2
 Pillow==10.4.0
 gunicorn==22.0.0
+pypdf==4.3.1

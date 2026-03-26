@@ -10,6 +10,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from pypdf import PdfWriter, PdfReader
 
 app = Flask(__name__)
 CORS(app)
@@ -22,7 +23,7 @@ MESES = ['enero','febrero','marzo','abril','mayo','junio',
 def fecha_es(d):
     return f'{d.day} de {MESES[d.month-1]} de {d.year}'
 
-# ── Colors ────────────────────────────────────────────────────
+# ── Colors ──────────────────────────────────────────────────
 NAVY    = colors.HexColor('#0f1d40')
 NAVY2   = colors.HexColor('#1a2d5a')
 NAVY3   = colors.HexColor('#223468')
@@ -40,7 +41,7 @@ NFT_BG  = colors.HexColor('#EBF0FA')
 COMP_GRP= colors.HexColor('#EEF1F9')
 LIGHT_BG= colors.HexColor('#F0F4FB')
 
-PESOS = {'ac': 0.35, 'ai': 0.35, 'em': 0.10, 'ep': 0.10, 'ef': 0.20}
+PESOS       = {'ac': 0.35, 'ai': 0.35, 'em': 0.10, 'ep': 0.10, 'ef': 0.20}
 COMP_LABELS = {'ac': 'AC', 'ai': 'AI', 'em': 'EM', 'ep': 'EP', 'ef': 'EF'}
 PESOS_LABEL = {'ac': '35%', 'ai': '35%', 'em': '10%', 'ep': '10%', 'ef': '20%'}
 
@@ -95,23 +96,7 @@ def nota_p(v, fs=7.5, big=False):
                        fontName='Helvetica-Bold' if v is not None else 'Helvetica',
                        alignment=TA_CENTER, leading=int(fs) + 2))
 
-
 def generar_boleta(data):
-    """
-    Genera la boleta mostrando SIEMPRE todos los períodos.
-    data = {
-        estudiante: { nombre, apellido, grado, nivel, encargado },
-        year: int,
-        periodo_seleccionado: int | 'anual',  # cuál está marcado
-        periodo_label: str,                    # etiqueta para el encabezado
-        num_periodos: int,
-        periodo_term: str,
-        componentes: ['ac','ai','em','ef'],
-        # materias: lista donde cada materia trae notas de TODOS los períodos
-        materias: [{ nombre, notas_por_periodo: { 1: {ac,ai,...}, 2: {...}, ... } }],
-        ingles: { nombre_curso, notas_por_periodo: {...} } | null,
-    }
-    """
     est          = data['estudiante']
     year         = data['year']
     periodo_label= data['periodo_label']
@@ -122,9 +107,6 @@ def generar_boleta(data):
     ingles       = data.get('ingles')
     nivel        = est['nivel']
     competencias = COMPETENCIAS_CONFIG.get(nivel, [])
-
-    comp_labels_upper = [COMP_LABELS[c] for c in componentes]
-    pesos_labels_list = [PESOS_LABEL[c] for c in componentes]
 
     fs_grade = 7.5
     fs_comp  = 7
@@ -137,7 +119,7 @@ def generar_boleta(data):
         leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB)
     story = []
 
-    # ── LOGO ─────────────────────────────────────────────────
+    # ── LOGO ──────────────────────────────────
     logo_b64 = LOGO_B64
     if logo_b64:
         logo_bytes = base64.b64decode(logo_b64)
@@ -145,19 +127,19 @@ def generar_boleta(data):
     else:
         logo_img = Spacer(1.8*cm, 1.8*cm)
 
-    # ── HEADER ───────────────────────────────────────────────
+    # ── HEADER ────────────────────────────────
     hdr_tbl = Table([[
         logo_img,
         [
             Paragraph('Colegio Bautista Internacional de Sonsonate',
-                      sty('HT', fontSize=13, fontName='Helvetica-Bold', textColor=NAVY,
-                          alignment=TA_CENTER, leading=16)),
+                       sty('HT', fontSize=13, fontName='Helvetica-Bold', textColor=NAVY,
+                           alignment=TA_CENTER, leading=16)),
             Paragraph('Fe, Cultura, Innovación y Disciplina',
-                      sty('HL', fontSize=8, textColor=GOLD, alignment=TA_CENTER,
-                          leading=11, fontName='Helvetica-Oblique')),
+                       sty('HL', fontSize=8, textColor=GOLD, alignment=TA_CENTER,
+                           leading=11, fontName='Helvetica-Oblique')),
             Spacer(1, 2),
             Paragraph(f'Boleta de Calificaciones · Año {year}',
-                      sty('HS', fontSize=8.5, textColor=GRAY, alignment=TA_CENTER, leading=11)),
+                       sty('HS', fontSize=8.5, textColor=GRAY, alignment=TA_CENTER, leading=11)),
         ],
         ''
     ]], colWidths=[2.2*cm, None, 2.2*cm])
@@ -173,7 +155,7 @@ def generar_boleta(data):
     ])))
     story.append(Spacer(1, 5))
 
-    # ── STUDENT INFO ─────────────────────────────────────────
+    # ── STUDENT INFO ──────────────────────────
     LBL = sty('LBL', fontSize=6.5, textColor=GOLD, fontName='Helvetica-Bold', leading=9)
     VAL = sty('VAL', fontSize=9, textColor=NAVY, fontName='Helvetica-Bold', leading=12)
 
@@ -195,11 +177,8 @@ def generar_boleta(data):
     story.append(info_tbl)
     story.append(Spacer(1, 5))
 
-    # ── GRADES TABLE — siempre todos los períodos ─────────────
-    # Columnas: ASIGNATURAS | [comps + NFT] x num_periodos | ACU
-    N = len(componentes)
-
-    # Anchos de columna
+    # ── GRADES TABLE ──────────────────────────
+    N      = len(componentes)
     nota_w = 1.0*cm
     nft_w  = 1.2*cm
     acu_w  = 1.3*cm
@@ -215,26 +194,22 @@ def generar_boleta(data):
     ACU_H = sty('ACUH', textColor=GOLD_LT, fontName='Helvetica-Bold',
                 alignment=TA_CENTER, fontSize=fs_grade, leading=int(fs_grade)+2)
 
-    # Fila de encabezados nivel 1: ASIGNATURAS | Trimestre 1 (span) | Trimestre 2 (span) | ... | ACU
     h1 = [Paragraph('ASIGNATURAS', TH_S)]
     for i in range(num_periodos):
         h1.append(Paragraph(f'{periodo_term} {i+1}', TH_S))
-        for _ in range(N):   # celdas vacías para el span (N componentes + ya pusimos 1 = N+1 total)
+        for _ in range(N):
             h1.append('')
     h1.append(Paragraph('ACU', ACU_H))
 
-    # Fila nivel 2: vacío | AC AI EM EF NFT | AC AI EM EF NFT | ... | —
     h2 = [Paragraph('', TH2_S)]
     for _ in range(num_periodos):
         for c in componentes:
             h2.append(Paragraph(PESOS_LABEL[c], TH2_S))
         h2.append(Paragraph('NFT', sty('NFTH2', textColor=GOLD_LT, fontName='Helvetica-Bold',
-                             alignment=TA_CENTER, fontSize=fs_grade-1, leading=int(fs_grade))))
+                  alignment=TA_CENTER, fontSize=fs_grade-1, leading=int(fs_grade))))
     h2.append(Paragraph('', TH2_S))
 
-    # Construir rows
     rows = [h1, h2]
-
     for m in materias:
         notas_pp = m.get('notas_por_periodo', {})
         row = [Paragraph(m['nombre'], TDL_S)]
@@ -247,14 +222,11 @@ def generar_boleta(data):
             nft = calc_nft(notas, componentes)
             nfts_periodo.append(nft)
             row.append(nota_p(nft, fs=fs_grade, big=True))
-
-        # ACU = promedio de NFTs disponibles
         validos = [n for n in nfts_periodo if n is not None]
         acu = sum(validos) / len(validos) if validos else None
         row.append(nota_p(acu, fs=fs_grade+0.5, big=True))
         rows.append(row)
 
-    # Anchos de columna: [mat_col] + [nota_w * N + nft_w] * num_periodos + [acu_w]
     fixed_w = (N * nota_w + nft_w) * num_periodos + acu_w
     PAGE_W  = landscape(letter)[0]
     mat_w   = PAGE_W - ML - MR - fixed_w
@@ -264,8 +236,6 @@ def generar_boleta(data):
     cw += [acu_w]
 
     grade_tbl = Table(rows, colWidths=cw, repeatRows=2)
-
-    # Calcular índices de columna para separadores de período
     ts = [
         ('BACKGROUND', (0,0), (-1,0), NAVY2),
         ('BACKGROUND', (0,1), (-1,1), NAVY3),
@@ -278,27 +248,21 @@ def generar_boleta(data):
         ('LEFTPADDING', (0,0), (0,-1), 8),
         ('LEFTPADDING', (1,0), (-1,-1), 1), ('RIGHTPADDING', (0,0), (-1,-1), 1),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        # ACU column bg
         ('BACKGROUND', (-1,2), (-1,-1), NFT_BG),
         ('LINEAFTER', (-2,0), (-2,-1), 1, BORDER),
     ]
-
-    # SPAN headers de período
     col = 1
     for i in range(num_periodos):
-        end_col = col + N  # inclusive (N notas + 1 NFT = N+1 cols)
+        end_col = col + N
         ts.append(('SPAN', (col, 0), (end_col, 0)))
         ts.append(('ALIGN', (col, 0), (end_col, 0), 'CENTER'))
-        # Separador visual entre períodos
         ts.append(('LINEBEFORE', (col, 0), (col, -1), 0.8, BORDER))
-        # NFT col highlight
         ts.append(('BACKGROUND', (end_col, 2), (end_col, -1), colors.HexColor('#edf1fb')))
         col = end_col + 1
-
     grade_tbl.setStyle(TableStyle(ts))
     story.append(grade_tbl)
 
-    # ── CURSOS COMPLEMENTARIOS ────────────────────────────────
+    # ── CURSOS COMPLEMENTARIOS ────────────────
     if ingles:
         story.append(Spacer(1, 3))
         comp_hdr = Table([[Paragraph('CURSOS COMPLEMENTARIOS', TH_S)]], colWidths=[None])
@@ -344,7 +308,6 @@ def generar_boleta(data):
 
         ing_rows = [ing_h1, ing_h2, ing_row]
         ing_tbl = Table(ing_rows, colWidths=cw)
-
         ing_ts = [
             ('BACKGROUND', (0,0), (-1,0), NAVY3),
             ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#2a3e70')),
@@ -371,10 +334,10 @@ def generar_boleta(data):
 
     story.append(Spacer(1, 6))
 
-    # ── ESCALA + COMPETENCIAS CIUDADANAS ─────────────────────
+    # ── ESCALA + COMPETENCIAS CIUDADANAS ──────
     if competencias:
         ESC_TH = sty('ET', fontSize=fs_comp, textColor=WHITE, fontName='Helvetica-Bold',
-                      alignment=TA_CENTER, leading=int(fs_comp)+2)
+                     alignment=TA_CENTER, leading=int(fs_comp)+2)
         ESC_V  = sty('EV', fontSize=fs_comp+0.5, textColor=NAVY, leading=int(fs_comp)+3)
 
         esc_tbl = Table([
@@ -443,7 +406,7 @@ def generar_boleta(data):
         ]))
         story.append(bottom)
 
-    # ── "Rogamos" ────────────────────────────────────────────
+    # ── Nota mínima ───────────────────────────
     story.append(Spacer(1, 5))
     story.append(Paragraph(
         'Rogamos que pueda leer detenidamente el presente informe de calificaciones. '
@@ -451,9 +414,9 @@ def generar_boleta(data):
         sty('NM', fontSize=7, textColor=GRAY, alignment=TA_RIGHT, leading=10)))
     story.append(Spacer(1, 12))
 
-    # ── FIRMAS ───────────────────────────────────────────────
+    # ── FIRMAS ────────────────────────────────
     SIGN_B3  = sty('SB3', fontSize=8.5, textColor=NAVY, fontName='Helvetica-Bold',
-                    alignment=TA_CENTER, leading=12)
+                   alignment=TA_CENTER, leading=12)
     SIGN_SM2 = sty('SS2', fontSize=7.5, textColor=GRAY, alignment=TA_CENTER, leading=10)
 
     LINE_T = lambda: Table([[''], ['']], colWidths=[6.5*cm], style=TableStyle([
@@ -479,12 +442,11 @@ def generar_boleta(data):
     return buf.getvalue()
 
 
-# ── Routes ────────────────────────────────────────────────────
+# ── Routes ──────────────────────────────────────────────────
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok', 'service': 'cbis-boleta-api'})
-
 
 @app.route('/generar-boleta', methods=['POST'])
 def generar():
@@ -494,15 +456,57 @@ def generar():
             return jsonify({'error': 'No data provided'}), 400
 
         pdf_bytes = generar_boleta(data)
-
         est = data['estudiante']
         filename = (
             f"boleta_{est['apellido'].replace(' ', '_')}_"
             f"{data.get('periodo_label', 'boleta').replace(' ', '_')}.pdf"
         )
-
         return send_file(
             io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/generar-boletas-lote', methods=['POST'])
+def generar_lote():
+    """
+    Recibe un array de estudiantes y devuelve un único PDF con todas las boletas.
+    Body: { grado: str, year: int, boletas: [ { ...mismo formato que /generar-boleta } ] }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'boletas' not in data:
+            return jsonify({'error': 'Se requiere array "boletas"'}), 400
+
+        boletas = data['boletas']
+        if not boletas:
+            return jsonify({'error': 'Array de boletas vacío'}), 400
+
+        # Generar cada boleta y concatenar con pypdf
+        writer = PdfWriter()
+
+        for item in boletas:
+            pdf_bytes = generar_boleta(item)
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            for page in reader.pages:
+                writer.add_page(page)
+
+        # Serializar PDF combinado
+        out = io.BytesIO()
+        writer.write(out)
+        out.seek(0)
+
+        grado   = data.get('grado', 'grado').replace(' ', '_')
+        year    = data.get('year', date.today().year)
+        filename = f"boletas_finales_{grado}_{year}.pdf"
+
+        return send_file(
+            out,
             mimetype='application/pdf',
             as_attachment=True,
             download_name=filename
