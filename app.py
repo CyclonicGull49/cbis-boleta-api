@@ -107,6 +107,7 @@ def generar_boleta(data):
     ingles       = data.get('ingles')
     nivel        = est['nivel']
     competencias = COMPETENCIAS_CONFIG.get(nivel, [])
+    comp_valores = data.get('competencias_valores', {})  # {comp_id: {periodo: valor}}
 
     fs_grade = 7.5
     fs_comp  = 7
@@ -366,10 +367,41 @@ def generar_boleta(data):
         comp_rows = [[Paragraph('COMPETENCIAS CIUDADANAS', COMP_TH2)] +
                      [Paragraph(t, COMP_TH2) for t in t_labels] +
                      [Paragraph('PROM', COMP_TH2)]]
+        # Mapeo label → id de competencia para buscar valores
+        COMP_LABEL_MAP = {
+            'Apertura al plan de formación cristiana':          'ed_cristiana_1',
+            'Participación activa en el plan de formación cristiana': 'ed_cristiana_2',
+            'Atiende con respeto las temáticas abordadas':      'diseño_original_1',
+            'Participación activa en el plan de diseño original': 'diseño_original_2',
+        }
+        COMP_VAL_ST = ParagraphStyle('CV', fontSize=fs_comp+0.5, fontName='Helvetica-Bold',
+                                      alignment=TA_CENTER, leading=int(fs_comp)+3)
+        def val_color(v):
+            if v == 'E':  return colors.HexColor('#16a34a')
+            if v == 'MB': return colors.HexColor('#a16207')
+            if v == 'B':  return colors.HexColor('#5B2D8E')
+            return colors.HexColor('#9ca3af')
+        def comp_p(v):
+            c = val_color(v)
+            st = ParagraphStyle('cpv', fontSize=fs_comp+0.5, fontName='Helvetica-Bold',
+                                 textColor=c, alignment=TA_CENTER, leading=int(fs_comp)+3)
+            return Paragraph(v if v else '—', st)
+
         for grupo, items in competencias:
             comp_rows.append([Paragraph(grupo, COMP_GH2)] + ['']*n_extra)
             for item in items:
-                comp_rows.append([Paragraph(item, COMP_IT2)] + ['']*n_extra)
+                comp_id = COMP_LABEL_MAP.get(item, '')
+                vals_item = comp_valores.get(comp_id, {})
+                periodos_vals = [comp_p(vals_item.get(str(p))) for p in range(1, num_periodos+1)]
+                # Promedio conceptual: E>MB>B, mayoría gana
+                all_vals = [vals_item.get(str(p)) for p in range(1, num_periodos+1) if vals_item.get(str(p))]
+                if all_vals:
+                    rank = {'E': 3, 'MB': 2, 'B': 1}
+                    avg = sum(rank.get(v, 0) for v in all_vals) / len(all_vals)
+                    prom_val = 'E' if avg >= 2.5 else 'MB' if avg >= 1.5 else 'B'
+                else:
+                    prom_val = ''
+                comp_rows.append([Paragraph(item, COMP_IT2)] + periodos_vals + [comp_p(prom_val)])
 
         p_cw = 2.2*cm
         comp_cw2 = [None] + [p_cw]*num_periodos + [1.6*cm]
